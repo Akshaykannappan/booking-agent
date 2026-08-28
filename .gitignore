@@ -1,0 +1,30 @@
+# Environment variables & API keys
+.env
+*.env
+!.env.example
+
+# Python
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node.js & Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Database & runtime files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Operating System
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
