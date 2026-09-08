@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react'
-
-const API_BASE = 'http://localhost:8000'
+import { API_BASE } from '../api'
 
 function getTodayString() {
   const today = new Date()
@@ -10,7 +9,7 @@ function getTodayString() {
   return `${yyyy}-${mm}-${dd}`
 }
 
-export default function Bookings() {
+export default function Bookings({ token }) {
   const [selectedDate, setSelectedDate] = useState(getTodayString())
   const [bookings, setBookings] = useState([])
   const [slots, setSlots] = useState([])
@@ -19,15 +18,16 @@ export default function Bookings() {
 
   useEffect(() => {
     fetchData(selectedDate)
-  }, [selectedDate])
+  }, [selectedDate, token])
 
   const fetchData = async (date) => {
     setLoading(true)
     setError('')
     try {
+      const headers = token ? { 'X-Admin-Token': token } : {}
       const [bookingsRes, slotsRes] = await Promise.all([
-        fetch(`${API_BASE}/api/bookings`),
-        fetch(`${API_BASE}/api/slots?date=${date}`),
+        fetch(`${API_BASE}/api/bookings`, { headers }),
+        fetch(`${API_BASE}/api/slots?date=${date}`, { headers }),
       ])
 
       if (!bookingsRes.ok) throw new Error('Failed to fetch bookings')
@@ -114,6 +114,22 @@ export default function Bookings() {
         ) : (
           <div className="slots-grid">
             {slots.map((s, idx) => {
+              if (s.is_break) {
+                return (
+                  <div key={idx} className="slot-card slot-break">
+                    <div className="slot-time">
+                      {s.start_time} – {s.end_time}
+                    </div>
+                    <div className="slot-count break-text">
+                      <strong>{s.break_name || 'Scheduled Break'}</strong>
+                    </div>
+                    <div className="slot-badge">
+                      <span className="badge badge-break">BREAK</span>
+                    </div>
+                  </div>
+                )
+              }
+
               const isFull = s.booked_count >= s.capacity || !s.is_available
               return (
                 <div

@@ -39,6 +39,11 @@ def init_db() -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_booking_date ON bookings(booking_date);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_phone ON bookings(user_phone);")
 
+    # Add reminder_sent column if it doesn't exist (safe migration for existing DBs)
+    existing_cols = [row[1] for row in cursor.execute("PRAGMA table_info(bookings)").fetchall()]
+    if "reminder_sent" not in existing_cols:
+        cursor.execute("ALTER TABLE bookings ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0")
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             open_time TEXT NOT NULL,
@@ -52,6 +57,22 @@ def init_db() -> None:
         cursor.execute(
             "INSERT INTO settings (open_time, close_time, slot_duration_minutes, capacity) VALUES (?, ?, ?, ?)",
             ("09:00", "17:00", 30, 1)
+        )
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS breaks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            duration_minutes INTEGER NOT NULL
+        );
+    """)
+    cursor.execute("SELECT COUNT(*) FROM breaks")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute(
+            "INSERT INTO breaks (name, start_time, end_time, duration_minutes) VALUES (?, ?, ?, ?)",
+            ("Lunch Break", "13:00", "14:00", 60)
         )
 
     cursor.execute("""
@@ -99,6 +120,14 @@ def get_history(user_phone: str, limit: int = 20) -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def get_breaks() -> List[Dict[str, Any]]:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, start_time, end_time, duration_minutes FROM breaks ORDER BY start_time ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
 
 def get_settings() -> Dict[str, Any]:
     conn = get_db()
@@ -106,13 +135,17 @@ def get_settings() -> Dict[str, Any]:
     cursor.execute("SELECT open_time, close_time, slot_duration_minutes, capacity FROM settings LIMIT 1")
     row = cursor.fetchone()
     conn.close()
+    breaks = get_breaks()
     if row:
-        return dict(row)
+        res = dict(row)
+        res["breaks"] = breaks
+        return res
     return {
         "open_time": "09:00",
         "close_time": "17:00",
         "slot_duration_minutes": 30,
         "capacity": 1,
+        "breaks": breaks,
     }
 
 
@@ -121,6 +154,7 @@ def update_settings(
     close_time: Optional[str] = None,
     slot_duration_minutes: Optional[int] = None,
     capacity: Optional[int] = None,
+    breaks: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     current = get_settings()
     new_open = open_time if open_time is not None else current["open_time"]
@@ -135,14 +169,26 @@ def update_settings(
         "INSERT INTO settings (open_time, close_time, slot_duration_minutes, capacity) VALUES (?, ?, ?, ?)",
         (new_open, new_close, new_duration, new_capacity),
     )
+
+    if breaks is not None:
+        cursor.execute("DELETE FROM breaks")
+        for b in breaks:
+            b_name = b.get("name", "Break")
+            b_start = b.get("start_time", "13:00")
+            b_dur = int(b.get("duration_minutes", 60))
+            b_end = b.get("end_time")
+            if not b_end:
+                sh, sm = map(int, b_start.split(":"))
+                total_m = sh * 60 + sm + b_dur
+                b_end = f"{(total_m // 60) % 24:02d}:{total_m % 60:02d}"
+            cursor.execute(
+                "INSERT INTO breaks (name, start_time, end_time, duration_minutes) VALUES (?, ?, ?, ?)",
+                (b_name, b_start, b_end, b_dur),
+            )
+
     conn.commit()
     conn.close()
-    return {
-        "open_time": new_open,
-        "close_time": new_close,
-        "slot_duration_minutes": new_duration,
-        "capacity": new_capacity,
-    }
+    return get_settings()
 
 
 def create_booking(booking_in: BookingCreate) -> Dict[str, Any]:
@@ -279,7 +325,8 @@ def reschedule_booking_in_db(
     cursor.execute(
         """
         UPDATE bookings
-        SET booking_date = ?, start_time = ?, end_time = ?, status = 'rescheduled', updated_at = ?
+        SET booking_date = ?, start_time = ?, end_time = ?, status = 'rescheduled',
+            reminder_sent = 0, updated_at = ?
         WHERE id = ?
         """,
         (new_date, new_start_time, new_end_time, now_str, booking_id)
@@ -289,6 +336,38 @@ def reschedule_booking_in_db(
     updated_row = cursor.fetchone()
     conn.close()
     return dict(updated_row) if updated_row else None
+
+
+def get_bookings_needing_reminder(target_date: str) -> List[Dict[str, Any]]:
+    """Return confirmed/rescheduled bookings on target_date where reminder has not been sent."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT * FROM bookings
+        WHERE booking_date = ?
+          AND status IN ('confirmed', 'rescheduled')
+          AND reminder_sent = 0
+        ORDER BY start_time ASC
+        """,
+        (target_date,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def mark_reminder_sent(booking_id: str) -> None:
+    """Mark a booking's reminder as sent."""
+    now_str = datetime.utcnow().isoformat()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE bookings SET reminder_sent = 1, updated_at = ? WHERE id = ?",
+        (now_str, booking_id)
+    )
+    conn.commit()
+    conn.close()
 
 
 if __name__ == "__main__":

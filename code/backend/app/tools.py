@@ -58,6 +58,19 @@ def is_overlapping(start1: str, end1: str, start2: str, end2: str) -> bool:
     return max(s1, s2) < min(e1, e2)
 
 
+def check_break_overlap(start_time: str, end_time: str, breaks: List[Dict[str, Any]]) -> Optional[str]:
+    for b in breaks:
+        b_start = b.get("start_time")
+        b_end = b.get("end_time")
+        if not b_end:
+            b_dur = b.get("duration_minutes", 60)
+            b_end = add_minutes_to_time(b_start, b_dur)
+        if is_overlapping(start_time, end_time, b_start, b_end):
+            return b.get("name", "Break")
+    return None
+
+
+
 
 def is_past_date(date_str: str) -> bool:
     try:
@@ -142,6 +155,7 @@ def check_available_slots(query_date: str) -> List[TimeSlot]:
     settings = db.get_settings()
     slot_duration = settings["slot_duration_minutes"]
     capacity = settings["capacity"]
+    breaks = settings.get("breaks", [])
     start_minutes = time_to_minutes(settings["open_time"])
     end_minutes = time_to_minutes(settings["close_time"])
 
@@ -159,6 +173,9 @@ def check_available_slots(query_date: str) -> List[TimeSlot]:
         e_min = e_total % 60
         end_str = f"{e_hour:02d}:{e_min:02d}"
 
+        break_name = check_break_overlap(start_str, end_str, breaks)
+        is_break = break_name is not None
+
         count = 0
         for b in existing_bookings:
             if is_overlapping(start_str, end_str, b["start_time"], b["end_time"]):
@@ -169,9 +186,11 @@ def check_available_slots(query_date: str) -> List[TimeSlot]:
                 slot_date=query_date,
                 start_time=start_str,
                 end_time=end_str,
-                is_available=(count < capacity),
+                is_available=(not is_break) and (count < capacity),
                 booked_count=count,
                 capacity=capacity,
+                is_break=is_break,
+                break_name=break_name,
             )
         )
 
@@ -208,6 +227,13 @@ def book_appointment_tool(
         end_time = add_minutes_to_time(start_time, slot_duration)
     else:
         end_time = resolve_time(end_time)
+
+    break_name = check_break_overlap(start_time, end_time, settings.get("breaks", []))
+    if break_name:
+        return {
+            "success": False,
+            "message": f"Cannot book appointment: Slot {start_time}-{end_time} is during {break_name}."
+        }
 
     existing_bookings = db.get_bookings_by_date(booking_date)
     count = 0
@@ -286,6 +312,12 @@ def reschedule_appointment_tool(
     else:
         new_end_time = resolve_time(new_end_time)
 
+    break_name = check_break_overlap(new_start_time, new_end_time, settings.get("breaks", []))
+    if break_name:
+        return {
+            "success": False,
+            "message": f"Cannot reschedule appointment: Slot {new_start_time}-{new_end_time} is during {break_name}."
+        }
 
     existing_bookings = db.get_bookings_by_date(new_date)
     count = 0

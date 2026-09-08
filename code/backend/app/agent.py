@@ -34,20 +34,21 @@ Context:
 
 CRITICAL BOOKING FLOW (DO NOT DEVIATE):
 Follow this exact sequence:
-1. When customer requests a booking without their name (e.g. "book me 2pm tomorrow"):
+1. When customer requests a booking without their name:
    - Reply asking ONLY for their full name: "I can help with that! Could you please provide your full name?"
-2. When customer provides their name (e.g. "Akshay"):
-   - Call `get_available_slots` for "{tomorrow_str}".
-   - Do NOT ask any questions about service type or notes. Output ONLY the confirmation question:
-     "I have an appointment for Akshay on {tomorrow_str} at 14:00. Would you like me to confirm this booking?"
+2. When customer provides their name (along with requested date and time):
+   - Check slot availability using `get_available_slots`.
+   - Do NOT ask any questions about service type or notes. Output ONLY the confirmation question using the customer's name, date, and requested time:
+     "I have an appointment for <name> on <date> at <time>. Would you like me to confirm this booking?"
    - DO NOT call `book_appointment` in this step. Wait for confirmation.
 3. When customer replies with "yes", "confirm", "sure", or "ok":
-   - You MUST call the `book_appointment` tool with: user_name="Akshay", user_phone=<customer phone>, booking_date="{tomorrow_str}", start_time="14:00", service_type=""
+   - You MUST call the `book_appointment` tool with: user_name=<name>, user_phone=<customer phone>, booking_date=<date>, start_time=<time>, service_type=""
    - Reply with the confirmed booking details and the Booking ID returned by the tool.
 
 Rules:
 - NEVER ask for phone number.
 - NEVER ask for or invent a service_type (leave service_type="").
+- Break times (such as Lunch Break) cannot be booked. If a slot is marked as a break or during a break, inform the customer politely and suggest the nearest available slot.
 - Never output raw JSON in your text responses.
 - Keep messages short and friendly for WhatsApp.
 """
@@ -88,6 +89,8 @@ def get_available_slots(ctx: RunContext[None], query_date: str) -> List[Dict[str
             "start_time": s.start_time,
             "end_time": s.end_time,
             "is_available": s.is_available,
+            "is_break": s.is_break,
+            "break_name": s.break_name,
         })
     return result
 

@@ -2,6 +2,13 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
+class BreakTime(BaseModel):
+    name: str = "Lunch Break"
+    start_time: str = "13:00"
+    duration_minutes: int = 60
+    end_time: Optional[str] = None
+
+
 class TimeSlot(BaseModel):
     slot_date: str
     start_time: str
@@ -9,6 +16,8 @@ class TimeSlot(BaseModel):
     is_available: bool = True
     booked_count: int = 0
     capacity: int = 1
+    is_break: bool = False
+    break_name: Optional[str] = None
 
 
 class Settings(BaseModel):
@@ -16,6 +25,7 @@ class Settings(BaseModel):
     close_time: str = "17:00"
     slot_duration_minutes: int = 30
     capacity: int = 1
+    breaks: List[BreakTime] = []
 
 
 
@@ -63,3 +73,8 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+
+
+class LoginRequest(BaseModel):
+    phone: str
+    password: str
